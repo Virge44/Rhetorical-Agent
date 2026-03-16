@@ -210,6 +210,43 @@ def advice():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/chat", methods=["POST"])
+def chat():
+    """
+    AgenC daemon compatibility: POST { "messages": [ { "role", "content" } ] }
+    Returns { "content": "..." }. Used when the daemon is configured with
+    llm.provider = "rhetorical" and llm.baseUrl = this app's URL.
+    """
+    data = request.get_json(silent=True) or {}
+    messages = data.get("messages")
+    if not isinstance(messages, list) or len(messages) == 0:
+        return jsonify({"error": "messages array required"}), 400
+    # Build a single block from the conversation for the rhetoric prompt
+    lines = []
+    for m in messages:
+        role = (m.get("role") or "user").lower()
+        content = (m.get("content") or "").strip()
+        if not content:
+            continue
+        if role == "system":
+            lines.append("CONTEXT: " + content)
+        elif role == "user":
+            lines.append("USER: " + content)
+        elif role == "assistant":
+            lines.append("ASSISTANT: " + content)
+    if not lines:
+        return jsonify({"error": "No message content"}), 400
+    block = "\n\n".join(lines)
+    if "smartest way to respond" not in block.lower() and "how should" not in block.lower():
+        block = block.rstrip() + "\n\n" + DEFAULT_QUESTION
+    try:
+        system_prompt = load_system_prompt()
+        reply = call_llm(system_prompt, block)
+        return jsonify({"content": reply})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "5000"))
     app.run(host="0.0.0.0", port=port, debug=os.environ.get("FLASK_DEBUG", "0") == "1")
